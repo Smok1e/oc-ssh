@@ -5,8 +5,10 @@ local lib = {}
 
 ----------------------------------------
 
+local LOG_2 = math.log(2)
+
 local function log2(x)
-    return math.floor(math.log(x) / math.log(2))
+    return math.floor(math.log(x) / LOG_2)
 end
 
 local MAX_BITS = log2(math.maxinteger)
@@ -67,6 +69,11 @@ function lib.decodeBytes(number, base, inverseAlphabet)
         end
     end
 
+    --[[
+    if offset ~= 0 then
+        result = result .. string.char(buffer >> (8 - offset))
+    end]]
+
     return result
 end
 
@@ -93,7 +100,7 @@ function lib.hexEncode(text)
 end
 
 function lib.hexDecode(text)
-    return lib.decodeBytes(text, 16, HEX_INVERSE_ALPHABET)
+    return lib.decodeBytes(text:upper(), 16, HEX_INVERSE_ALPHABET)
 end
 
 ----------------------------------------

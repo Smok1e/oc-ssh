@@ -83,6 +83,15 @@ function lib.inverse(table)
     return result
 end
 
+function lib.reverse(table)
+    local result = {}
+    for i = 1, #table do
+        result[i] = table[#table - i + 1]
+    end
+
+    return result
+end
+
 ---------------------------------------- Conversions
 
 -- Converts string into a byte array
@@ -146,6 +155,28 @@ function lib.xor(lhs, rhs)
     end
 
     return result
+end
+
+-- Performs byte-wise XOR between two strings
+function lib.xorBytes(lhs, rhs)
+    local result = {}
+    for i = 1, #lhs // 8 do
+        result[i] = ("<I8"):pack(
+            ("<I8"):unpack(lhs:sub(8 * (i - 1) + 1, 8 * i)) ~ 
+            ("<I8"):unpack(rhs:sub(8 * (i - 1) + 1, 8 * i))
+        )
+    end
+
+    local remainder = #lhs % 8
+    if remainder ~= 0 then
+        local format = "<I" .. remainder
+        result[#result + 1] = (format):pack(
+            (format):unpack(lhs:sub(-remainder, -1)) ~ 
+            (format):unpack(rhs:sub(-remainder, -1))
+        )
+    end
+
+    return table.concat(result)
 end
 
 -- Initializes new counter with zero value

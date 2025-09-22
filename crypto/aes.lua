@@ -126,6 +126,7 @@ end
 
 -- Direction defines whether the function is applied in inverse mode or not
 local function shiftRows(state, direction)
+    
     local function shiftRow(rowIndex, n)
         local row = {}
         for i = 1, 4 do

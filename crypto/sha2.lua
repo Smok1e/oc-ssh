@@ -4,15 +4,73 @@ local lib = {}
 
 ----------------------------------------
 
-local IVEC = {
-    0x6A09E667,
-    0xBB67AE85,
-    0x3C6EF372,
-    0xA54FF53A,
-    0x510E527F,
-    0x9B05688C,
-    0x1F83D9AB,
-    0x5BE0CD19
+-- Prepares message for digesting
+local function pad(text)
+    return text .. "\x80" .. ("\x00"):rep(64 - (#text + 8) % 64 - 1) .. array.toBytes(array.fromNumber(#text * 8, 8, true))
+end
+
+-- Rotates 32-bit word
+local function rotateWord(number, direction)
+    return (number >> direction) | (number << (32 - direction)) & 0xFFFFFFFF
+end
+
+----------------------------------------
+
+-- Computes sha256/224 hash
+local function sha2(size, mod, ivec, rcon, message)
+    local hash = array.copy(ivec)
+
+    message = pad(message)
+    for n = 1, #message // 64 do
+        local w = {}
+
+        for i = 1, 16 do
+            w[i] = (">I4"):unpack(
+                message:sub(
+                    (n - 1) * 64 + (i - 1) * 4 + 1, 
+                    (n - 1) * 64 +  i      * 4 + 1
+                )
+            )
+        end
+
+        for i = 17, 64 do
+            local s0 = rotateWord(w[i - 15],  7) ~ rotateWord(w[i - 15], 18) ~ (w[i - 15] >>  3)
+            local s1 = rotateWord(w[i -  2], 17) ~ rotateWord(w[i -  2], 19) ~ (w[i -  2] >> 10)
+            w[i] = (w[i - 16] + s0 + w[i - 7] + s1) % mod
+        end
+
+        local a, b, c, d, e, f, g, h = table.unpack(hash)
+        for i = 1, 64 do
+            local S1 = rotateWord(e, 6) ~ rotateWord(e, 11) ~ rotateWord(e, 25)
+            local ch = (e & f) ~ ((~e) & g)
+            local temp1 = (h + S1 + ch + rcon[i] + w[i]) % mod
+            local S0 = rotateWord(a, 2) ~ rotateWord(a, 13) ~ rotateWord(a, 22)
+            local maj = (a & b) ~ (a & c) ~ (b & c)
+            local temp2 = (S0 + maj) % mod
+
+            h, g, f, e, d, c, b, a = g, f, e, (d + temp1) % mod, c, b, a, (temp1 + temp2) % mod
+        end
+
+        hash[1], hash[2], hash[3], hash[4] = (hash[1] + a) % mod, (hash[2] + b) % mod, (hash[3] + c) % mod, (hash[4] + d) % mod
+        hash[5], hash[6], hash[7], hash[8] = (hash[5] + e) % mod, (hash[6] + f) % mod, (hash[7] + g) % mod, (hash[8] + h) % mod
+    end
+
+    local result = ""
+    for i = 1, size // 32 do
+        result = result .. (">I4"):pack(hash[i])
+    end
+
+    return result
+end
+
+----------------------------------------
+
+local SHA_256_IVEC = {
+    0x6A09E667,0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19
+}
+
+local SHA_224_IVEC = {
+    0xC1059ED8, 0x367CD507, 0x3070DD17, 0xF70E5939, 0xFFC00B31, 0x68581511, 0x64F98FA7, 0xBEFA4FA4
 }
 
 local ROUND_CONSTANTS = {
@@ -26,106 +84,12 @@ local ROUND_CONSTANTS = {
     0x748F82EE, 0x78A5636F, 0x84C87814, 0x8CC70208, 0x90BEFFFA, 0xA4506CEB, 0xBEF9A3F7, 0xC67178F2
 }
 
-local MODULUS = 2^32
-
-----------------------------------------
-
--- Prepares message for digesting
-local function pad(text)
-    return text .. "\x80" .. ("\x00"):rep(64 - (#text + 8) % 64 - 1) .. array.toBytes(array.fromNumber(#text * 8, 8, true))
-end
-
--- Iterates over equally-sized chunks of a given string
-local function chunks(string, chunkSize)
-    local i, count = 0, #string // chunkSize
-    
-    return function()
-        i = i + 1
-
-        if i > count then
-            return nil
-        end
-
-        return i, string:sub((i - 1) * chunkSize + 1, i * chunkSize)
-    end
-end
-
--- Iterates over 32-bit words of a given string
-local function words(string)
-    local iter = chunks(string, 4)
-    return function()
-        local i, chunk = iter()
-        if not i then
-            return nil
-        end
-
-        return i, (">I4"):unpack(chunk)
-    end
-end
-
--- Rotates 32-bit word
-local function rotateWord(number, direction)
-    return (number >> direction) | (number << (32 - direction)) & 0xFFFFFFFF
-end
-
--- Computes sha256 hash
 function lib.sha256(message)
-    local hash = array.copy(IVEC)
+    return sha2(256, 2^32, SHA_256_IVEC, ROUND_CONSTANTS, message)
+end
 
-    message = pad(message)
-    for n = 0, #message // 64 do
-        local w = {}
-
-        for i = 0, 15 do
-            w[i] = (">I4"):unpack(
-                message:sub(
-                    (n - 1) * 64 + (i - 1) * 4 + 1, 
-                    (n - 1) * 64 +  i      * 4 + 1
-                )
-            )
-        end
-
-        for i = 17, 64 do
-            local s0 = rotateWord(w[i - 15],  7) ~ rotateWord(w[i - 15], 18) ~ (w[i - 15] >>  3)
-            local s1 = rotateWord(w[i -  2], 17) ~ rotateWord(w[i -  2], 19) ~ (w[i -  2] >> 10)
-            w[i] = (w[i - 16] + s0 + w[i - 7] + s1) % MODULUS
-        end
-
-        local a, b, c, d, e, f, g, h = table.unpack(hash)
-        for i = 1, 64 do
-            local S1 = rotateWord(e, 6) ~ rotateWord(e, 11) ~ rotateWord(e, 25)
-            local ch = (e & f) ~ ((~e) & g)
-            local temp1 = (h + S1 + ch + ROUND_CONSTANTS[i] + w[i]) % MODULUS
-            local S0 = rotateWord(a, 2) ~ rotateWord(a, 13) ~ rotateWord(a, 22)
-            local maj = (a & b) ~ (a & c) ~ (b & c)
-            local temp2 = (S0 + maj) % MODULUS
-
-            h = g
-            g = f
-            f = e
-            e = (d + temp1) % MODULUS
-            d = c 
-            c = b
-            b = a
-            a = (temp1 + temp2) % MODULUS
-        end
-
-        hash[1] = (hash[1] + a) % MODULUS
-        hash[2] = (hash[2] + b) % MODULUS
-        hash[3] = (hash[3] + c) % MODULUS
-        hash[4] = (hash[4] + d) % MODULUS
-        hash[5] = (hash[5] + e) % MODULUS
-        hash[6] = (hash[6] + f) % MODULUS
-        hash[7] = (hash[7] + g) % MODULUS
-        hash[8] = (hash[8] + h) % MODULUS
-    end
-
-    local result = ""
-    for i = 1, #hash do
-        result = result .. (">I4"):pack(hash[i])
-    end
-
-    return result
+function lib.sha224(message)
+    return sha2(224, 2^32, SHA_224_IVEC, ROUND_CONSTANTS, message)
 end
 
 ----------------------------------------

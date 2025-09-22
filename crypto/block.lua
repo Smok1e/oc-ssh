@@ -71,11 +71,9 @@ function lib.CBCEncrypt(initializationVector, encryptCallback, plaintext, blockS
 
     for i = 1, #plaintext // blockSize do
         prevBlock = encryptCallback(
-            array.toBytes(
-                array.xor(
-                    array.fromBytes(plaintext:sub((i - 1) * blockSize + 1, i * blockSize)), 
-                    array.fromBytes(prevBlock)
-                )
+            array.xorBytes(
+                plaintext:sub((i - 1) * blockSize + 1, i * blockSize),
+                prevBlock
             )
         )
         
@@ -107,11 +105,9 @@ function lib.CBCDecrypt(initializationVector, decryptCallback, cipher, blockSize
     for i = 1, #cipher // blockSize do
         local currBlock = cipher:sub((i - 1) * blockSize + 1, i * blockSize)
         
-        plaintext = plaintext .. array.toBytes(
-            array.xor(
-                array.fromBytes(decryptCallback(currBlock)), 
-                array.fromBytes(prevBlock)
-            )
+        plaintext = plaintext .. array.xorBytes(
+            decryptCallback(currBlock),
+            prevBlock
         )
 
         prevBlock = currBlock
