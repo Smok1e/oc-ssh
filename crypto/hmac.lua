@@ -39,12 +39,20 @@ end
 
 ---------------------------------------- Predefined HMAC variants
 
-function lib.hmac_sha256(message, key)
+function lib.hmac_sha224(key, message)
+    return lib.hmac(sha2.sha224, 64, key, message)
+end
+
+function lib.hmac_sha256(key, message)
     return lib.hmac(sha2.sha256, 64, key, message)
 end
 
-function lib.hmac_sha224(message, key)
-    return lib.hmac(sha2.sha224, 64, key, message)
+function lib.hmac_sha384(key, message)
+    return lib.hmac(sha2.sha384, 128, key, message)
+end
+
+function lib.hmac_sha512(key, message)
+    return lib.hmac(sha2.sha512, 128, key, message)
 end
 
 ----------------------------------------
