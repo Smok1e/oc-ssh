@@ -1,172 +1,413 @@
-local serialization = require("serialization")
 local filesystem = require("filesystem")
-local constants = require("ssh/constants")
-local encoding = require("crypto/encoding")
+local component = require("component")
+local computer = require("computer")
+local event = require("event")
+local term = require("term")
+local shell = require("shell")
+
 local sha2 = require("crypto/sha2")
-local streamlib = require("ssh/stream")
+local encoding = require("crypto/encoding")
+local curve25519 = require("crypto/curve25519")
+
+local sshlib = require("ssh")
+local utils = require("ssh/utils")
+local transportlib = require("ssh/transport")
+local userauthlib = require("ssh/userauth")
+local connectionlib = require("ssh/connection")
 local keylib = require("ssh/key")
+local streamlib = require("ssh/stream")
+local constants = require("ssh/constants")
+local xterm = require("ssh/xterm")
 
-local ssh = {}
+local args, options = shell.parse(...)
 
-----------------------------------------
+---------------------------------------- Connection
 
-ssh.CONFIG_DIR = "/home/.ssh"
-ssh.KNOWN_HOST_KEY_STORAGE_PATH = filesystem.concat(ssh.CONFIG_DIR, "known_hosts")
-ssh.CONFIG_FILE_PATH = filesystem.concat(ssh.CONFIG_DIR, "config")
+local function connect(address, port, timeout)
+    local socket, reason = component.internet.connect(address, port)
+    if not socket then
+        error(reason)
+    end
 
----------------------------------------- 
+    local connectionStartTime = computer.uptime()
+    while not socket.finishConnect() do
+        if event.pull(0) == "interrupted" then
+            error("connection interrupted")
+        end
 
-local function makeMissingDirectories(path)
-    local segments, currPath = filesystem.segments(path), ""
-    for i = 1, #segments do
-        currPath = filesystem.concat(currPath, segments[i])
+        if computer.uptime() - connectionStartTime > timeout then
+            error("connection timed out")
+        end
+    end
 
-        if not filesystem.isDirectory(currPath) then
-            if not filesystem.makeDirectory(currPath) then
-                error(currPath .. " exists, but is not a directory")
+    return socket
+end
+
+local function recv(socket)
+    local chunks = {}
+    while true do
+        local chunk, reason = socket.read()
+        if not chunk or #chunk == 0 then
+            if reason then
+                error(reason)
             end
+
+            break
         end
+
+        table.insert(chunks, chunk)
     end
+
+    return table.concat(chunks)
 end
 
----------------------------------------- Known hosts storage
+---------------------------------------- Host validation
 
--- Returns canonitial host identifier
-function ssh.host(address, port)
-    if port == constants.DEFAULT_PORT then
-        return address
-    else
-        return ("[%s]:%d"):format(address, port)
-    end
-end
-
--- Returns known host public key if exists
-function ssh.findHostKey(keyType, host)
-    local file, reason = io.open(ssh.KNOWN_HOST_KEY_STORAGE_PATH, "r")
-    if not file then
-        return
-    end
-
-    for line in file:lines() do
-        local entryHost, entryKeyType, entryKeyBlobBase64 = line:match("(.+) (.+) (.+)")
-        if not entryHost then
-            error("host key storage corrupted")
-        end
-        
-        if entryHost == host and entryKeyType == keyType then
-            file:close()
-
-            return keylib.decode(encoding.base64Decode(entryKeyBlobBase64))
-        end
-    end
-
-    file:close()
-end
-
--- Saves host public key into the local storage
-function ssh.saveHostKey(host, key)
-    makeMissingDirectories(ssh.CONFIG_DIR)
-
-    local file, reason = io.open(ssh.KNOWN_HOST_KEY_STORAGE_PATH, "a")
-    if not file then
-        error(ssh.KNOWN_HOST_KEY_STORAGE_PATH .. ": " .. reason)
-    end
-
-    file:write(("%s %s %s\n"):format(host, key.type, encoding.base64Encode(keylib.encode(key))))
-    file:close()
-end
-
----------------------------------------- Key storage
-
-function ssh.writeKey(path, key)
-    makeMissingDirectories(filesystem.path(path))
-
-    local file, reason = io.open(path, "w")
-    if not file then
-        error(path .. ": " .. reason)
-    end
-
-    file:write(("%s %s\n"):format(key.type, encoding.base64Encode(keylib.encode(key))))
-    file:close()
-end
-
-function ssh.readKey(path)
-    local file, reason = io.open(path, "r")
-    if not file then
-        error(path .. ": " .. reason)
-    end
-
-    local keyType, keyBlobBase64 = file:read(math.huge):match("(.+) ([^\n]+)\n?")
-    file:close()
-
-    if not keyType then
-        return
-    end
-
-    local key = keylib.decode(encoding.base64Decode(keyBlobBase64))
-    assert(key.type == keyType, "corrupted key file")
-
-    return key
-end
-
--- Reads private key and returns private/public pair
-function ssh.readIdentity(path)
-    local privateKey = ssh.readKey(path)
-
-    return {
-        type = privateKey.type,
-        privateKey = privateKey,
-        publicKey = keylib.generatePublicKey(privateKey)
-    }
-end
-
-function ssh.readIdentities()
-    if not filesystem.exists(ssh.CONFIG_DIR) then
-        return {}
-    end
-
-    local identities = {}
-
-    for filename in filesystem.list(ssh.CONFIG_DIR) do
-        if filename:match("^id_.+") and not filename:match("%.pub$") then
-            table.insert(
-                identities, 
-                ssh.readIdentity(
-                    filesystem.concat(ssh.CONFIG_DIR, filename)
-                )
+local function validateHostKey(address, port, key)
+    local host = sshlib.host(address, port)
+    local known = sshlib.findHostKey(key.type, host)
+    
+    if not known then
+        term.write(
+            (
+                "The host %s is not known.\n" .. 
+                "%s key fingerprint is %s.\n" ..
+                "Are you sure you want to continue connecting? [Y/n] "
+            ):format(
+                address, 
+                key.type,
+                keylib.fingerprint(key)
             )
+        )
+
+        if not (term.read() or "n"):lower():match("y.+") then
+            return false
         end
+
+        sshlib.saveHostKey(host, key)
+        print("Permanently added " .. address .. " (" .. key.type .. ") to the list of known hosts.")
+
+        return true
     end
 
-    return identities
+    if keylib.encode(known) ~= keylib.encode(key) then
+        print("\x1B[31mWARNING!\x1B[0m Server host key does not match previously known entry!")
+        return false
+    end
+
+    return true
 end
 
----------------------------------------- Config
-
-function ssh.readConfig()
-    if not filesystem.exists(ssh.CONFIG_FILE_PATH) then
-        return {}
+local function parseDestination(destination)
+    local user, address = destination:match("^(.+)@(.+)$")
+    if not user then
+        return destination
     end
 
-    local file, reason = io.open(ssh.CONFIG_FILE_PATH, "r")
-    if not file then
-        error(ssh.CONFIG_FILE_PATH .. ": " .. reason)
-    end
-
-    local result, reason = serialization.unserialize(file:read(math.huge))
-    file:close()
-
-    if not result then
-        error("invalid config" .. (reason and (": " .. reason) or ""))
-    end
-
-    return result
+    return address, user
 end
 
-function ssh.findHostConfig(host)
-    return ssh.readConfig()[host]
+---------------------------------------- SSH client
+
+local function sshEventHandler(self, eventType, ...)
+    if eventType == "interrupted" then
+        if not self.shellStarted then
+            self.running = false
+        end
+
+    elseif eventType == "internet_ready" then
+        self.transport:receive(recv(self.socket))
+
+    elseif eventType == "key_down" then
+        if not self.shellStarted then
+            return
+        end
+
+        local _, byte, key = ...
+        
+        if byte == 0 then
+            if     key == 200 then -- Arrow up
+                self.channel:sendData("\x1B[A")
+            elseif key == 208 then -- Arrow down
+                self.channel:sendData("\x1B[B")
+            elseif key == 205 then -- Arrow right
+                self.channel:sendData("\x1B[C")
+            elseif key == 203 then -- Arrow left
+                self.channel:sendData("\x1B[D")
+            end
+        else
+            self.channel:sendData(utf8.char(byte))
+        end
+    elseif eventType == "clipboard" then
+        local _, data = ...
+        self.channel:sendData(data)
+    end
+end
+
+local function sshPrompt(self, message, pwchar)
+    term.write(message)
+
+    local response = term.read {pwchar = pwchar}
+    if not response then
+        self.transport:disconnect(
+            constants.SSH_DISCONNECT.AUTH_CANCELLED_BY_USER,
+            "aborted"
+        )
+
+        self.running = false
+        return
+    end
+
+    if pwchar then
+        term.write("\n")
+    end
+
+    return response:sub(1, -2)    
 end
 
 ----------------------------------------
 
-return ssh
+local function sshOnDisconnected(self, reasonCode, description)
+    print("Disconnected: " .. description)
+    self.running = false
+end
+
+local function sshOnTransportReady(self)
+    self.transport:requestService(
+        "ssh-userauth",
+        function()
+            self:onUserauthAccepted()
+        end
+    )
+end
+
+local function sshOnUserauthAccepted(self)
+    if not self.user then
+        self.user = self:prompt("user: ")
+
+        if not self.user then
+            self.running = false
+            return
+        end
+    end
+
+    self.userauth = userauthlib.new(self.transport)
+    self.userauth.user = self.user
+    self.userauth.verbose = self.verbose
+
+    local identities = self.identities or sshlib.readIdentities()
+    local function requestConnection()
+        if #identities > 0 then
+            local identity = table.remove(identities, 1)
+
+            if identity.type == "ssh-ed25519" then
+                self.userauth.method = userauthlib.publicKey(
+                    identity.publicKey,
+                    function(message)
+                        return keylib.sign(identity.privateKey, message)
+                    end
+                )
+
+                self.userauth:requestConnection()
+            else
+                requestConnection()
+            end
+        else
+            local pass = self:prompt(self.user .. "@" .. self.address .. "'s password: ", "*")
+            if not pass then
+                self.running = false
+                return
+            end
+
+            self.userauth.method = userauthlib.password(pass)
+            self.userauth:requestConnection()
+        end
+    end    
+
+    self.userauth.bannerHandler = function(banner)
+        print(banner)
+    end
+
+    self.userauth.failureHandler = function()
+        print("Authentication failed; please try again")
+        requestConnection()
+    end
+
+    self.userauth.successHandler = function()
+        self:onConnectionAccepted()
+    end
+
+    requestConnection()
+end
+
+local function sshOnConnectionAccepted(self)
+    self.connection = connectionlib.new(self.transport)
+    self.connection.verbose = self.verbose
+
+    self.connection:openSessionChannel(
+        function(channel)
+            self:onSessionChannelOpened(channel)
+        end,
+
+        function()
+            print("Session open failure")
+            self.running = false
+        end
+    )
+end
+
+local function sshOnUserauthBanner(self, banner)
+    print(banner)
+end
+
+local function sshOnSessionChannelOpened(self, channel)
+    self.verbose = false
+    self.transport.verbose = false
+    self.connection.verbose = false
+    self.userauth.verbose = false
+
+    self.channel = channel
+    self.xterm = xterm.new()
+
+    self.xterm.responseHandler = function(data)
+        self.channel:sendData(data)
+    end
+
+    channel.dataHandler = function(data)
+        self.xterm:write(data)
+    end
+
+    channel.extendedDataHandler = function(code, data)
+        self.xterm:write(data)
+    end
+
+    channel.closeHandler = function()
+        self.running = false
+    end
+
+    if self.command then
+        channel:requestExec(self.command)
+    else
+        channel:requestPty(
+            "xterm-256color", 
+            self.xterm.cols, 
+            self.xterm.rows, 
+            self.xterm.width, 
+            self.xterm.height, 
+            ""
+        )
+
+        channel:requestShell(
+            function()
+                self.shellStarted = true
+            end,
+            
+            function()
+                print("Shell request rejected")
+                self.running = false
+            end
+        )
+    end
+end
+
+----------------------------------------
+
+local function sshInit(self)
+    self.socket = connect(self.address, self.port, 3)
+    
+    self.transport = transportlib.new(self.socket.write, "SSH-2.0-Pizda_1.0")
+    self.transport.verbose = self.verbose
+
+    self.transport.hostKeyHandler = function(key)
+        return validateHostKey(self.address, self.port, key)
+    end
+    
+    self.transport:onReady(
+        function()
+            self:onTransportReady()
+        end
+    )
+
+    self.transport.disconnectHandler = function(...)
+        self:onDisconnected(...)
+    end
+
+    self.running = true
+end
+
+local function sshLoop(self)
+    while self.running do
+        if self.shellStarted then
+            self:eventHandler(term.pull())
+        else
+            self:eventHandler(event.pull())
+        end
+    end
+end
+
+----------------------------------------
+
+local function sshNew()
+    local self = {}
+
+    self.eventHandler = sshEventHandler
+    self.prompt = sshPrompt
+
+    self.onDisconnected         = sshOnDisconnected
+    self.onTransportReady       = sshOnTransportReady
+    self.onUserauthAccepted     = sshOnUserauthAccepted
+    self.onUserauthBanner       = sshOnUserauthBanner
+    self.onConnectionAccepted   = sshOnConnectionAccepted
+    self.onSessionChannelOpened = sshOnSessionChannelOpened
+    self.onShellStarted         = sshOnShellStarted
+
+    self.loop = sshLoop
+    self.init = sshInit
+
+    return self
+end
+
+----------------------------------------
+
+local function usage()
+    print("Usage: ssh [OPTIONS] destination [COMMAND]")
+    print("Available options:")
+    print("  -h, --help:        Print usage information and exit")
+    print("  -v, --verbose:     Enable debug logging")
+    print("      --port=<port>: Override port")
+end
+
+if #args < 1 or options.h or options.help then
+    usage()
+    return
+end
+
+local ssh = sshNew(address, port, user, verbose)
+
+-- Search for existing config
+local destination = args[1]
+local config = sshlib.findHostConfig(destination)
+if config then
+    if not config.address then
+        error("invalid config for entry '" .. destination .. "': no address found")
+    end
+
+    ssh.address = config.address
+    ssh.user = config.user
+    ssh.port = config.port
+
+    if config.identity then
+        ssh.identities = {sshlib.readIdentity(config.identity)}
+    end
+else
+    ssh.address, ssh.user = parseDestination(args[1])
+end
+
+ssh.port = tonumber(options.port) or ssh.port or constants.DEFAULT_PORT
+ssh.verbose = options.v or options.verbose
+ssh.command = args[2]
+
+ssh:init()
+ssh:loop()
+
+----------------------------------------
