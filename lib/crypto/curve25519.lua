@@ -335,7 +335,7 @@ end
 
 local function randomBytes(n)
     local bytes = {}
-    for i = 1, #n do
+    for i = 1, n do
         bytes[i] = math.random(0, 0xFF)
     end
 

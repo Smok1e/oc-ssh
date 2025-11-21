@@ -89,6 +89,37 @@ local function xtermEraseDisplay(self, arg)
     end
 end
 
+local function xtermInsertLines(self, arg)
+    local x, y = term.getCursor()
+    local count = tonumber(arg) or 1
+
+    self.gpu.copy(1, y, self.cols, self.rows - y + 1, 0, count)
+    self.gpu.fill(1, y, self.cols, count, " ")
+end
+
+local function xtermDeleteLines(self, arg)
+    local x, y = term.getCursor()
+    local count = tonumber(arg) or 1
+
+    self.gpu.copy(1, y, self.cols, self.rows - y + 1, 0, -count)
+    self.gpu.fill(1, self.rows - count, self.cols, count, " ")
+end
+
+local function xtermDeleteCharacters(self, arg)
+    local x, y = term.getCursor()
+    local count = tonumber(arg) or 1
+    
+    self.gpu.copy(x + count, y, count, 1, -count, 0)
+    self.gpu.fill(self.cols - count + 1, y, count, 1, " ")
+end
+
+local function xtermEraseCharacters(self, arg)
+    local x, y = term.getCursor()
+    local count = tonumber(arg) or 1
+
+    self.gpu.fill(x, y, count, 1, " ")
+end
+
 local function xtermSetCharacterAttributes(self, arg)
     local function setColors(bg, fg)
         if bg then
@@ -112,7 +143,6 @@ local function xtermSetCharacterAttributes(self, arg)
         if not arg2 then
             -- Normal (default)
             if (arg1 or 0) == 0 then
-                component.ocelot.log("normal")
                 setColors(xterm.PALETTE_8[xterm.BG_DEFAULT_INDEX], xterm.PALETTE_8[xterm.FG_DEFAULT_INDEX])
             end
 
@@ -156,47 +186,104 @@ end
 ----------------------------------------
 
 local function xtermProcessSequence(self)
+    local x, y = term.getCursor()
+
     local matches
     local function match(pattern)
+        -- Fisrt check last character instead of matching
+        if self.sequence:sub(-1, -1) ~= pattern:sub(-1, -1) then
+            return
+        end
+
         matches = {self.sequence:match(pattern)}
         return #matches > 0
     end
 
-    local x, y = term.getCursor()
     if self.sequenceType == xterm.SEQUENCE.CSI then
-        -- CSI Pm m - Character attributes (SGR)
-        if match("%[([%d;]*)m") then
-            self:setCharacterAttributes(matches[1])
+        -- CSI Ps A - Cursor Up Ps times (CUU)
+        if match("%[(%d*)A") then
+            term.setCursor(x, y - (tonumber(matches[1]) or 1))
 
-        -- CSI Ps K - Erase in Line (EL)
-        elseif match("%[(%d?)K") then
-            self:eraseLine(tonumber(matches[1]))
+        -- CSI Ps B - Cursor Down Ps times (CUD)
+        elseif match("%[(%d*)B") then
+            term.setCursor(x, y + (tonumber(matches[1]) or 1))
 
-        -- CSI Ps ; Ps H - Set cursor position
-        elseif match("%[(%d*);?(%d*)H") then
-            term.setCursor(tonumber(matches[1]) or 1, tonumber(matches[2]) or 1)
+        -- CSI Ps C - Cursor forward Ps times (CUF)
+        elseif match("%[(%d*)C") then
+            term.setCursor(x + (tonumber(matches[1]) or 1), y)
+            
+        -- CSI Ps D - Cursor backward Ps times (CUB)
+        elseif match("%[(%d*)D") then
+            term.setCursor(x - (tonumber(matches[1]) or 1), y)
 
-        -- CSI Ps J - Erase in Display (ED)
-        elseif match("%[(%d?)J") then
-            self:eraseDisplay(tonumber(matches[1]))
+        -- CSI Ps E - Cursor next line Ps times (CNL)
+        elseif match("%[(%d*)E") then
+            term.setCursor(x, y + tonumber(matches[1]) or 1)
 
-        -- CSI Ps G - Cursor character absolute (CHA) (default = 1)
+        -- CSI Ps F - Cursor preceding line Ps times (CPL)
+        elseif match("%[(%d*)F") then
+            term.setCursor(x, y - tonumber(matches[1]) or 1)
+
+        -- CSI Ps G - Cursor character absolute (CHA)
         elseif match("%[(%d*)G") then
             term.setCursor(tonumber(matches[1]) or 1, y)
 
-        -- CSI Ps A - Cursor Up Ps times (default = 1)
-        elseif match("%[(%d*)A") then
+        -- CSI Ps ; Ps H - Set cursor positionя
+        elseif match("%[(%d*);?(%d*)H") then
+            term.setCursor(tonumber(matches[2]) or 1, tonumber(matches[1]) or 1)
+
+        -- CSI Ps I - Cursor forward tabulation Ps tab stops (CHT)
+        elseif match("%[(%d*)I") then
+            term.write(("\t"):rep(tonumber(matches[1]) or 1))
+
+        -- CSI Ps J - Erase in Display (ED)
+        elseif match("%[(%d*)J") then
+            self:eraseDisplay(tonumber(matches[1]))
+
+        -- CSI Ps K - Erase in Line (EL)
+        elseif match("%[(%d*)K") then
+            self:eraseLine(tonumber(matches[1]))
+
+        -- CSI Ps L - Insert Ps lines (IL)
+        elseif match("%[(%d*)L") then
+            self:insertLines(matches[1])
+
+        -- CSI Ps M - Delete Ps lines (IL)
+        elseif match("%[(%d*)M") then
+            self:deleteLines(matches[1])
+
+        -- CSI Ps P - Delete Ps Characters
+        elseif match("%[(%d*)P") then
+            self:deleteCharacters(matches[1])
+
+        -- CSI Ps X - Erase character (ECH)
+        elseif match("%[(%d*)X") then
+            self:eraseCharacters(matches[1])
+
+        -- CSI Ps c - Send device attributes (DA)
+        elseif match("%[(%d*)c") then
+            if self.responseHandler then
+                self.responseHandler("\x1B[?1;2;0c")
+            end
+
+        -- CSI Pm d - Line position absolute (VPA)
+        elseif match("%[(%d*)d") then
+            term.setCursor(x, tonumber(matches[1]) or 1)
+
+        -- CSI Pm e - Line position relative (VPR)
+        elseif match("%[(%d*)e") then
             term.setCursor(x, y + (tonumber(matches[1]) or 1))
 
-        -- CSI Ps C - Cursor forward Ps times (default = 1)
-        elseif match("%[(%d*)C") then
-            term.setCursor(x + (tonumber(matches[1]) or 1), y)
+        -- CSI Pm m - Character attributes (SGR)
+        elseif match("%[([%d*;]*)m") then
+            self:setCharacterAttributes(matches[1])
 
-        else
-            component.ocelot.log("Escape sequence: " .. self.sequence .. " (" .. self.sequenceType .. ")")
+        elseif match("%[(%d*);(%d*)f") then
+            term.setCursor(tonumber(matches[2]) or 1, tonumber(matches[1]) or 1)
+
         end
     else
-        component.ocelot.log("Escape sequence: " .. self.sequence .. " (" .. self.sequenceType .. ")")
+        -- component.ocelot.log("Escape sequence: " .. self.sequence .. " (" .. self.sequenceType .. ")")
     end
 
     self.sequence = nil
@@ -250,7 +337,9 @@ local function xtermWrite(self, data)
             if byte == 0x1B then
                 self.state = xterm.STATE.SEQUENCE
                 self.sequence = ""
-            else
+
+            -- I hate bells
+            elseif byte ~= 0x07 then
                 term.write(char)
             end
         end
@@ -266,9 +355,14 @@ function xterm.new()
     self.state = xterm.STATE.NORMAL
 
     self.cols, self.rows = self.gpu.getResolution()
+    self.width, self.height = 8 * self.cols, 16 * self.rows
 
-    self.eraseLine = xtermEraseLine
-    self.eraseDisplay = xtermEraseDisplay
+    self.eraseLine        = xtermEraseLine
+    self.eraseDisplay     = xtermEraseDisplay
+    self.insertLines      = xtermInsertLines
+    self.deleteLines      = xtermDeleteLines
+    self.deleteCharacters = xtermDeleteCharacters
+    self.eraseCharacters  = xtermEraseCharacters
     self.setCharacterAttributes = xtermSetCharacterAttributes
 
     self.processSequence = xtermProcessSequence

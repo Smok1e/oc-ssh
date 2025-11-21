@@ -179,29 +179,6 @@ function lib.xorBytes(lhs, rhs)
     return table.concat(result)
 end
 
--- Initializes new counter with zero value
-function lib.counter(size)
-    local counter = {}
-    for i = 1, size do
-        counter[i] = 0
-    end
-
-    return counter
-end
-
--- Increments counter by 1
-function lib.incrementCounter(counter)
-    local carry = 1
-    for i = 1, #counter do
-        local digit = counter[#counter - i + 1] + carry
-        carry = digit >> 8
-
-        counter[#counter - i + 1] = digit % 0x100
-    end
-
-    return counter
-end
-
 ----------------------------------------
 
 return lib

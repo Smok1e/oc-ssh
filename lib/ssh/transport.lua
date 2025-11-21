@@ -4,6 +4,7 @@ local aes = require("crypto/aes")
 local ctr = require("crypto/ctr")
 local hmac = require("crypto/hmac")
 
+local keylib = require("ssh/key")
 local constants = require("ssh/constants")
 local streamlib = require("ssh/stream")
 local utils = require("ssh/utils")
@@ -218,7 +219,10 @@ transportMessageHandlers[SSH_MESSAGE.KEXINIT] = function(self, stream)
 end
 
 transportMessageHandlers[SSH_MESSAGE.KEX_ECDH_REPLY] = function(self, stream)
-    local serverPublicHostKey = stream:readString()
+    local serverPublicHostKeyBlob = stream:readString()
+    local serverPublicHostKey = keylib.decode(serverPublicHostKeyBlob)
+    assert(serverPublicHostKey.type == self.algorithms.serverHostKey)
+
     local serverPublicKey = stream:readString()
     local serverHostSignature = stream:readString()
 
@@ -234,7 +238,7 @@ transportMessageHandlers[SSH_MESSAGE.KEX_ECDH_REPLY] = function(self, stream)
     stream:writeString(self.serverVersion)
     stream:writeString(self.keyExchange.clientPayload)
     stream:writeString(self.keyExchange.serverPayload)
-    stream:writeString(serverPublicHostKey)
+    stream:writeString(serverPublicHostKeyBlob)
     stream:writeString(self.publicKey)
     stream:writeString(serverPublicKey)
     stream:writeMpint(sharedSecret)
@@ -252,7 +256,7 @@ transportMessageHandlers[SSH_MESSAGE.KEX_ECDH_REPLY] = function(self, stream)
     end
 
     if self.hostKeyHandler then
-        if not self:hostKeyHandler(serverPublicHostKey) then
+        if not self.hostKeyHandler(serverPublicHostKey) then
             error("server host key refused")
         end
 
@@ -359,25 +363,12 @@ end
 local function transportVerifyHostKey(self, serverPublicHostKey, serverHostSignature)
     assert(self.algorithms.serverHostKey == "ssh-ed25519")
 
-    local stream = streamlib.bufferedStream(serverPublicHostKey)
-    local keyType = stream:readString()
-    local key = stream:readString()
-
-    if self.algorithms.serverHostKey ~= keyType then
-        if self.verbose then
-            print("[ssh-transport] Server host key type " .. keyType .. " does not match expected " .. self.algorithms.sereverHostKey)
-        end
-
-        return false
-    end
-
-    stream:clear(serverHostSignature)
+    local stream = streamlib.bufferedStream(serverHostSignature)
     local signatureType = stream:readString()
     local signature = stream:readString()
 
-    assert(signatureType == keyType)
-
-    return curve25519.ed25519.verify(key, self.sessionId, signature)
+    assert(signatureType == serverPublicHostKey.type)
+    return keylib.verify(serverPublicHostKey, self.sessionId, signature)
 end
 
 transportMessageHandlers[SSH_MESSAGE.NEWKEYS] = function(self, stream)
@@ -484,6 +475,17 @@ transportMessageHandlers[SSH_MESSAGE.DISCONNECT] = function(self, stream)
     else
         print("[ssh-transport] transport.disconnectHandler not set, throwing error")
         error("disconnected")
+    end
+end
+
+---------------------------------------- Debug messages
+
+transportMessageHandlers[SSH_MESSAGE.DEBUG] = function(self, stream)
+    if self.verbose then
+        local alwaysDisplay = stream:readBoolean()
+        local message = stream:readString()
+
+        print("[ssh-transport] Debug message: " .. message)
     end
 end
 

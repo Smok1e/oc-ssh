@@ -82,8 +82,9 @@ end
 local BASE64_ALPHABET = array.fromString("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
 local BASE64_INVERSE_ALPHABET = array.inverse(BASE64_ALPHABET)
 
-function lib.base64Encode(text)
-    return padding.base64Pad(lib.encodeBytes(text, 64, BASE64_ALPHABET))
+function lib.base64Encode(text, noPadding)
+    local result = lib.encodeBytes(text, 64, BASE64_ALPHABET)
+    return (noPadding and result) or padding.base64Pad(result)
 end
 
 function lib.base64Decode(text)

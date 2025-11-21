@@ -16,8 +16,8 @@ local lib = {}
 -- opad and ipad are respectively 0x36 and 0x5C repeated 
 -- block-size times
 
-local OPAD_CONSTANT = string.char(0x5C)
-local IPAD_CONSTANT = string.char(0x36)
+local OPAD_CONSTANT = "\x5C"
+local IPAD_CONSTANT = "\x36"
 
 function lib.hmac(hashFunction, blockSize, key, message)
     if #key ~= blockSize then
@@ -53,6 +53,15 @@ end
 
 function lib.hmac_sha512(key, message)
     return lib.hmac(sha2.sha512, 128, key, message)
+end
+
+function lib.hmac_sha2(size, key, message)
+    return ({
+        [224] = lib.hmac_sha224,
+        [256] = lib.hmac_sha256,
+        [384] = lib.hmac_sha384,
+        [512] = lib.hmac_sha512
+    })[size](key, message)
 end
 
 ----------------------------------------

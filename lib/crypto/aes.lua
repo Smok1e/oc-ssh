@@ -245,6 +245,30 @@ function lib.decrypt(keyLength, cipher, roundKeys)
     return array.toBytes(state)
 end
 
+---------------------------------------- Convenient cipher factories
+
+function lib.encryptor(key, keyLength)
+    if not keyLength then
+        keyLength = 8 * #key
+    end
+
+    local roundKeys = lib.expandKey(keyLength, key)
+    return function(plaintext)
+        return lib.encrypt(keyLength, plaintext, roundKeys)
+    end
+end
+
+function lib.decryptor(key, keyLength)
+    if not keyLength then
+        keyLength = 8 * #key
+    end
+
+    local roundKeys = lib.expandKey(keyLength, key)
+    return function(cipher)
+        return lib.decrypt(keyLength, cipher, roundKeys)
+    end
+end
+
 ----------------------------------------
 
 return lib

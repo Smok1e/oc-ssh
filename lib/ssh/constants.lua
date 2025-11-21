@@ -17,6 +17,8 @@ end
 ---------------------------------------- Message IDs
 
 constants.SSH_MESSAGE = {
+    ANY                       =  -1,
+    
     DISCONNECT                =   1,
     IGNORE                    =   2,
     UNIMPLEMENTED             =   3,
@@ -45,7 +47,7 @@ constants.SSH_MESSAGE = {
     CHANNEL_CLOSE             =  97,
     CHANNEL_REQUEST           =  98,
     CHANNEL_SUCCESS           =  99,
-    CHANNEL_FAILURE           = 100
+    CHANNEL_FAILURE           = 100,
 }
 
 constants.strMessageId = makeEnumSerializator(constants.SSH_MESSAGE)
@@ -161,7 +163,7 @@ constants.SEQNO_MAX = 2^32
 
 constants.PACKET_PADDING = 16
 
-constants.CHANNEL_SESSION_PACKET_SIZE = 16 * 1024
+constants.CHANNEL_SESSION_PACKET_SIZE = 1024
 constants.CHANNEL_SESSION_WINDOW_SIZE = 64 * constants.CHANNEL_SESSION_PACKET_SIZE
 
 ----------------------------------------
