@@ -22,7 +22,7 @@ xterm.SEQUENCE = {
 
 -- Normal colors
 xterm.PALETTE_8 = {
-    0x0F0F0F, -- Black 
+    0x000000, -- Black 
     0x800000, -- Red 
     0x008000, -- Green 
     0x808000, -- Yellow 
@@ -34,7 +34,7 @@ xterm.PALETTE_8 = {
 
 -- Bright colors
 xterm.PALETTE_16 = {
-    0x0F0F0F, -- Black
+    0x000000, -- Black
     0xFF0000, -- Red
     0x00FF00, -- Green
     0xFFFF00, -- Yellow
