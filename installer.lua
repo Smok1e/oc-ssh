@@ -96,7 +96,7 @@ local function install()
         )
     end
 
-    status("Starting installer...")
+    status("Starting installer...\n")
 
     -- Creating necessary directories
     for _, dir in pairs(DIRECTORIES) do
@@ -134,7 +134,7 @@ local function install()
     end
 
     term.clearLine()
-    status("ssh has been installed succesfully!")
+    status("ssh has been installed succesfully!\n")
 end
 
 local function help()
