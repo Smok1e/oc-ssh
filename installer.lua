@@ -39,7 +39,8 @@ local FILES = {
     "lib/ssh/key.lua",
     "lib/ssh.lua",
 
-    "bin/ssh.lua"
+    "bin/ssh.lua",
+    "bin/ssh-keygen.lua"
 }
 
 local PROGRESS_WIDTH = 50
