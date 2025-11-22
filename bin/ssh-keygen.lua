@@ -37,10 +37,10 @@ local privateKeyData, publicKeyData = curve25519.ed25519.generateKeypair()
 local privateKey = keylib.new("ssh-ed25519", privateKeyData)
 local publicKey = keylib.new("ssh-ed25519", publicKeyData)
 
-ssh.writeIdentity(privateKeyPath, privateKey)
+ssh.writeKey(privateKeyPath, privateKey)
 info("Your private key saved to " .. privateKeyPath)
 
-ssh.writeIdentity(publicKeyPath, publicKey)
+ssh.writeKey(publicKeyPath, publicKey)
 info("Your public key saved to " .. publicKeyPath)
 info("The key fingerprint is " .. keylib.fingerprint(publicKey))
 
