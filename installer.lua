@@ -135,7 +135,7 @@ local function install()
     end
 
     term.clearLine()
-    status("ssh has been installed succesfully!\n")
+    status("ssh has been installed successfully!\n")
 end
 
 local function help()
